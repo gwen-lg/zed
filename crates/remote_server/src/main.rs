@@ -47,9 +47,9 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() {
+    use anyhow::Context;
     use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
-    use remote::proxy::ProxyLaunchError;
-    use remote_server::unix::{execute_proxy, execute_run};
+    use remote_server::unix::{ExecuteProxyError, execute_proxy, execute_run};
 
     let cli = Cli::parse();
 
@@ -80,15 +80,13 @@ fn main() {
         Some(Commands::Proxy {
             identifier,
             reconnect,
-        }) => match execute_proxy(identifier, reconnect) {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                if let Some(err) = err.downcast_ref::<ProxyLaunchError>() {
+        }) => execute_proxy(identifier, reconnect)
+            .inspect_err(|err| {
+                if let ExecuteProxyError::ServerNotRunning(err) = err {
                     std::process::exit(err.to_exit_code());
                 }
-                Err(err)
-            }
-        },
+            })
+            .context("failed execute proxy"),
         Some(Commands::Version) => {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {
@@ -111,6 +109,9 @@ fn main() {
     };
     if let Err(error) = result {
         log::error!("exiting due to error: {}", error);
+        error.chain().enumerate().skip(1).for_each(|(idx, err)| {
+            log::error!("{idx}: {err}");
+        });
         std::process::exit(1);
     }
 }
