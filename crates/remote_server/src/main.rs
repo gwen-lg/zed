@@ -46,24 +46,35 @@ fn main() {
 }
 
 #[cfg(not(windows))]
-fn main() {
-    use anyhow::Context;
-    use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
-    use remote_server::unix::{ExecuteProxyError, execute_proxy, execute_run};
-
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     if let Some(socket_path) = &cli.askpass {
         askpass::main(socket_path);
-        return;
+        return Ok(());
     }
 
     if cli.printenv {
         util::shell_env::print_env();
-        return;
+        return Ok(());
     }
 
-    let result = match cli.command {
+    run(cli)
+    // if let Err(error) = result {
+    //     log::error!("exiting due to error: {}", error);
+    //     error.chain().enumerate().skip(1).for_each(|(idx, err)| {
+    //         log::error!("{idx}: {err}");
+    //     });
+    //     std::process::exit(1);
+    // }
+}
+
+fn run(cli: Cli) -> Result<(), anyhow::Error> {
+    use anyhow::Context;
+    use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
+    use remote_server::unix::{ExecuteProxyError, execute_proxy, execute_run};
+
+    match cli.command {
         Some(Commands::Run {
             log_file,
             pid_file,
@@ -106,12 +117,5 @@ fn main() {
             eprintln!("usage: remote <run|proxy|version>");
             std::process::exit(1);
         }
-    };
-    if let Err(error) = result {
-        log::error!("exiting due to error: {}", error);
-        error.chain().enumerate().skip(1).for_each(|(idx, err)| {
-            log::error!("{idx}: {err}");
-        });
-        std::process::exit(1);
     }
 }
