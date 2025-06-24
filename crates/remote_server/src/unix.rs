@@ -500,7 +500,7 @@ pub fn execute_run(
 }
 
 #[derive(Debug, Error)]
-pub enum ServerPathError {
+pub(crate) enum ServerPathError {
     #[error("Failed to create server_dir `{path}`")]
     CreateServerDir {
         #[source]
@@ -556,7 +556,7 @@ impl ServerPaths {
 }
 
 #[derive(Debug, Error)]
-pub enum ExecuteProxyError {
+pub(crate) enum ExecuteProxyError {
     #[error("Failed to init server paths")]
     ServerPath(#[from] ServerPathError),
 
@@ -588,7 +588,10 @@ pub enum ExecuteProxyError {
     StderrTask(#[source] anyhow::Error),
 }
 
-pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<(), ExecuteProxyError> {
+pub(crate) fn execute_proxy(
+    identifier: String,
+    is_reconnecting: bool,
+) -> Result<(), ExecuteProxyError> {
     init_logging_proxy();
     init_panic_hook();
 
@@ -677,7 +680,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<(), Ex
 
 #[derive(Debug, Error)]
 #[error("failed to kill existing server")]
-pub struct KillRunningServerError(std::io::Error);
+pub(crate) struct KillRunningServerError(std::io::Error);
 
 fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), KillRunningServerError> {
     log::info!("killing existing server with PID {}", pid);
@@ -699,7 +702,7 @@ fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), KillRunningS
 }
 
 #[derive(Debug, Error)]
-pub enum SpawnServerError {
+pub(crate) enum SpawnServerError {
     #[error("failed to remove stdin socket")]
     RemoveStdinSocket(#[source] std::io::Error),
 
@@ -781,7 +784,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
 
 #[derive(Debug, Error)]
 #[error("Failed to remove PID file")]
-pub struct CheckPidError(std::io::Error);
+pub(crate) struct CheckPidError(std::io::Error);
 
 fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     let Some(pid) = std::fs::read_to_string(&path)
