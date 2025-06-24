@@ -34,7 +34,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smol::{
     fs,
-    process::{self, Child, Stdio},
+    process::{self, Child, Command, Stdio},
 };
 use std::{
     any::TypeId,
@@ -1719,9 +1719,11 @@ impl SshRemoteConnection {
         let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
         if let Some(build_remote_server) = build_remote_server {
-            let src_path = self
-                .build_local(build_remote_server, self.platform().await?, delegate, cx)
+            let bin_path = self
+                .build_local(&build_remote_server, self.platform().await?, delegate, cx)
                 .await?;
+            let src_path = Self::compress(&build_remote_server, delegate, cx, bin_path).await?;
+
             let tmp_path = paths::remote_server_dir_relative().join(format!(
                 "download-{}-{}",
                 std::process::id(),
@@ -1979,26 +1981,13 @@ impl SshRemoteConnection {
     #[cfg(debug_assertions)]
     async fn build_local(
         &self,
-        build_remote_server: String,
+        build_remote_server: &str,
         platform: SshPlatform,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
-    ) -> Result<PathBuf> {
-        use smol::process::{Command, Stdio};
+    ) -> Result<String> {
+        use smol::process::Command;
         use std::env::VarError;
-
-        async fn run_cmd(command: &mut Command) -> Result<()> {
-            let output = command
-                .kill_on_drop(true)
-                .stderr(Stdio::inherit())
-                .output()
-                .await?;
-            anyhow::ensure!(
-                output.status.success(),
-                "Failed to run command: {command:?}"
-            );
-            Ok(())
-        }
 
         let Some(triple) = platform.triple() else {
             anyhow::bail!("can't cross compile for: {:?}", platform);
@@ -2131,17 +2120,38 @@ impl SshRemoteConnection {
             format!("target/remote_server/{triple}/debug/remote_server")
         };
 
+        Ok(bin_path)
+    }
+
+    async fn compress(
+        build_remote_server: &str,
+        delegate: &Arc<dyn SshClientDelegate + 'static>,
+        cx: &mut AsyncApp,
+        target_path: String,
+    ) -> Result<PathBuf, anyhow::Error> {
         let path = if !build_remote_server.contains("nocompress") {
             delegate.set_status(Some("Compressing binary"), cx);
-            run_cmd(Command::new("gzip").args(["-9", "-f", &bin_path])).await?;
-
-            std::env::current_dir()?.join(format!("{bin_path}.gz"))
+            run_cmd(Command::new("gzip").args(["-9", "-f", &target_path])).await?;
+            let path = std::env::current_dir()?.join(target_path).join(".gz");
+            path
         } else {
-            bin_path.into()
+            target_path.into()
         };
-
         Ok(path)
     }
+}
+
+async fn run_cmd(command: &mut Command) -> Result<()> {
+    let output = command
+        .kill_on_drop(true)
+        .stderr(Stdio::inherit())
+        .output()
+        .await?;
+    anyhow::ensure!(
+        output.status.success(),
+        "Failed to run command: {command:?}"
+    );
+    Ok(())
 }
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
