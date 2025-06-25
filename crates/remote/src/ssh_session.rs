@@ -309,7 +309,7 @@ impl SshPlatform {
             "{}-{}",
             self.arch,
             match self.os {
-                "linux" => "unknown-linux-gnu",
+                "linux" => "unknown-linux-musl",
                 "macos" => "apple-darwin",
                 _ => return None,
             }
@@ -1985,6 +1985,7 @@ impl SshRemoteConnection {
         cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
         use smol::process::{Command, Stdio};
+        use std::env::VarError;
 
         async fn run_cmd(command: &mut Command) -> Result<()> {
             let output = command
@@ -1999,27 +2000,45 @@ impl SshRemoteConnection {
             Ok(())
         }
 
+        let Some(triple) = platform.triple() else {
+            anyhow::bail!("can't cross compile for: {:?}", platform);
+        };
+        let mut rust_flags = match std::env::var("RUSTFLAGS") {
+            Ok(val) => val,
+            Err(VarError::NotPresent) => String::new(),
+            Err(e) => {
+                log::error!("Failed to get env var `RUSTFLAGS` value: {e}");
+                String::new()
+            }
+        };
+        if platform.os == "linux" {
+            rust_flags.push_str(" -C target-feature=+crt-static");
+        }
+
         let bin_path = if platform.arch == std::env::consts::ARCH
             && platform.os == std::env::consts::OS
         {
             delegate.set_status(Some("Building remote server binary from source"), cx);
             log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args([
-                "build",
-                "--package",
-                "remote_server",
-                "--features",
-                "debug-embed",
-                "--target-dir",
-                "target/remote_server",
-            ]))
+            run_cmd(
+                Command::new("cargo")
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env("RUSTFLAGS", &rust_flags),
+            )
             .await?;
 
-            "target/remote_server/debug/remote_server".into()
+            format!("target/remote_server/{triple}/debug/remote_server")
         } else {
-            let Some(triple) = platform.triple() else {
-                anyhow::bail!("can't cross compile for: {:?}", platform);
-            };
             smol::fs::create_dir_all("target/remote_server").await?;
 
             if build_remote_server.contains("cross") {
@@ -2057,7 +2076,8 @@ impl SshRemoteConnection {
                         .env(
                             "CROSS_CONTAINER_OPTS",
                             "--mount type=bind,src=./target,dst=/app/target",
-                        ),
+                        )
+                        .env("RUSTFLAGS", &rust_flags),
                 )
                 .await?;
             } else {
@@ -2087,17 +2107,21 @@ impl SshRemoteConnection {
                     cx,
                 );
                 log::info!("building remote binary from source for {triple} with Zig");
-                run_cmd(Command::new("cargo").args([
-                    "zigbuild",
-                    "--package",
-                    "remote_server",
-                    "--features",
-                    "debug-embed",
-                    "--target-dir",
-                    "target/remote_server",
-                    "--target",
-                    &triple,
-                ]))
+                run_cmd(
+                    Command::new("cargo")
+                        .args([
+                            "zigbuild",
+                            "--package",
+                            "remote_server",
+                            "--features",
+                            "debug-embed",
+                            "--target-dir",
+                            "target/remote_server",
+                            "--target",
+                            &triple,
+                        ])
+                        .env("RUSTFLAGS", &rust_flags),
+                )
                 .await?;
             }
 
